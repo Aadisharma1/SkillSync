@@ -77,6 +77,17 @@ body::before {
   font-family: 'DM Mono', monospace;
 }
 
+.nav-section-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+.nav-section-wrap::-webkit-scrollbar { width: 4px; }
+.nav-section-wrap::-webkit-scrollbar-track { background: transparent; }
+.nav-section-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.nav-section-wrap::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 .nav-section { padding: 20px 14px 8px; }
 .nav-label {
   font-family: 'DM Mono', monospace;
@@ -491,6 +502,7 @@ canvas { display: block; }
       <p>Career Intelligence Platform</p>
     </div>
 
+    <div class="nav-section-wrap">
     <div class="nav-section">
       <div class="nav-label">Overview</div>
       <div class="nav-item active" onclick="showView('dashboard')">
@@ -549,6 +561,7 @@ canvas { display: block; }
         <span class="nav-badge" style="background:rgba(247,200,110,.12);color:var(--yellow)">6co</span>
       </div>
     </div>
+    </div><!-- /nav-section-wrap -->
 
     <div class="sidebar-footer">
       8 novel features · 12 endpoints<br/>
