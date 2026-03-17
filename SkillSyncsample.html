@@ -1565,10 +1565,10 @@ function salaryBoostSimulator(inp) {
 }
 
 function runSalary() {
-  const cgpa     = parseFloat(document.getElementById('s_cgpa').value);
-  const branch   = document.getElementById('s_branch').value;
-  const year     = parseInt(document.getElementById('s_year').value)||2;
-  const backlogs = parseInt(document.getElementById('s_backlogs').value)||0;
+  const cgpa     = parseFloat(document.getElementById('s_cgpa')?.value) || 0;
+  const branch   = document.getElementById('s_branch')?.value || '';
+  const year     = parseInt(document.getElementById('s_year')?.value) || 2;
+  const backlogs = parseInt(document.getElementById('s_backlogs')?.value) || 0;
 
   if (!cgpa || cgpa<0||cgpa>10) { alert('Please enter a valid CGPA.'); return; }
   if (!branch) { alert('Please select your branch.'); return; }
