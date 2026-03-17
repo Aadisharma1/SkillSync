@@ -1,6 +1,9 @@
 {
   "version": 2,
+  "cleanUrls": true,
   "rewrites": [
+    { "source": "/", "destination": "/SkillSyncsample.html" },
+    { "source": "/app", "destination": "/SkillSyncsample.html" },
     { "source": "/(.*)", "destination": "/SkillSyncsample.html" }
   ],
   "headers": [
@@ -8,7 +11,8 @@
       "source": "/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
       ]
     }
   ]
