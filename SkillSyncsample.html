@@ -1587,27 +1587,34 @@ function runSalary() {
 
   const res = document.getElementById('salaryResult');
   res.style.display='block';
+
+  const inp = { CGPA:cgpa, Branch:branch, Year:year, Backlogs:backlogs, Internships:internships, Projects:projects, Hackathons:hackathons, Certifications:certifications };
+  activeSkills.forEach(s=>{ inp[s]=true; });
+
+  const clientFallback = () => {
+    const {current, boosts} = salaryBoostSimulator(inp);
+    renderSalaryResult(
+      { predicted_lpa: current, range_low:(current-0.9).toFixed(1), range_high:(current+0.9).toFixed(1),
+        feature_importance_hints:[], mock:false },
+      { current_lpa: current, boost_simulations: boosts.map(b=>({skill:b.skill, boost_lpa:b.boost})), mock:false },
+      payload
+    );
+  };
+
+  // Demo/Vercel: use client-side ML directly — no server needed
+  if (IS_DEMO || !API_BASE) { clientFallback(); return; }
+
   res.innerHTML = spinnerHTML('Calling Salary + Boost models…');
 
   // Fire both requests in parallel
   Promise.all([
-    fetch(`${API_BASE}/predict-salary`,  {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json()),
-    fetch(`${API_BASE}/simulate-boost`,  {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json())
+    fetch(`${API_BASE}/predict-salary`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.ok?r.json():Promise.reject()),
+    fetch(`${API_BASE}/simulate-boost`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.ok?r.json():Promise.reject())
   ])
   .then(([salData, boostData]) => renderSalaryResult(salData, boostData, payload))
-  .catch(() => {
-    // Fallback: client-side calculation
-    const inp = { CGPA:cgpa, Branch:branch, Year:year, Backlogs:backlogs, Internships:internships, Projects:projects, Hackathons:hackathons, Certifications:certifications };
-    activeSkills.forEach(s=>{ inp[s]=true; });
-    const {current, boosts} = salaryBoostSimulator(inp);
-    renderSalaryResult(
-      { predicted_lpa: current, range_low:(current-0.9).toFixed(1), range_high:(current+0.9).toFixed(1),
-        feature_importance_hints:[], mock:true },
-      { current_lpa: current, boost_simulations: boosts.map(b=>({skill:b.skill, boost_lpa:b.boost})), mock:true },
-      payload
-    );
-  });
+  .catch(clientFallback);
 }
+
 
 function renderSalaryResult(salData, boostData, payload) {
   const current   = parseFloat(salData.predicted_lpa).toFixed(2);
