@@ -1396,22 +1396,8 @@ function runGapAnalysis() {
   const userSkills = [...document.querySelectorAll('#g_chips .chip.on')].map(c=>c.dataset.sk);
   const res = document.getElementById('gapResult');
   res.style.display='block';
-  res.innerHTML = spinnerHTML('Calling Skill Gap model…');
 
-  fetch(`${API_BASE}/analyze-gap`, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      cgpa: 7.5, year: 3, branch: 'CSE', backlogs: 0,
-      internships: 0, projects: 0, hackathons: 0, certifications: 0,
-      current_skills: userSkills,
-      target_role: role
-    })
-  })
-  .then(r => r.ok ? r.json() : Promise.reject(r))
-  .then(data => renderGapResult(data, role, userSkills))
-  .catch(() => {
-    // Backend unreachable — fall back to client-side set-diff
+  const clientFallback = () => {
     const required = ROLE_SKILLS[role] || [];
     const have     = userSkills.filter(s=>required.includes(s));
     const missing  = required.filter(s=>!userSkills.includes(s));
@@ -1422,9 +1408,25 @@ function runGapAnalysis() {
       skills_you_have: have, missing_skills: missing,
       bonus_skills: bonus,
       learning_roadmap: missing.slice(0,8).map(s=>({skill:s, tip:getLearningTip(s)})),
-      mock: true
+      mock: !IS_DEMO // show warning only if truly offline, not demo mode
     }, role, userSkills);
-  });
+  };
+
+  if (IS_DEMO || !API_BASE) { clientFallback(); return; }
+
+  res.innerHTML = spinnerHTML('Calling Skill Gap model…');
+  fetch(`${API_BASE}/analyze-gap`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      cgpa: 7.5, year: 3, branch: 'CSE', backlogs: 0,
+      internships: 0, projects: 0, hackathons: 0, certifications: 0,
+      current_skills: userSkills, target_role: role
+    })
+  })
+  .then(r => r.ok ? r.json() : Promise.reject(r))
+  .then(data => renderGapResult(data, role, userSkills))
+  .catch(clientFallback);
 }
 
 function renderGapResult(data, role, userSkills) {
@@ -1677,20 +1679,23 @@ function renderDemand() {
   const container = document.getElementById('demandContent');
   if (container.dataset.rendered) return;
   container.dataset.rendered = '1';
-  container.innerHTML = spinnerHTML('Loading demand forecast…');
 
+  if (IS_DEMO || !API_BASE) {
+    // Demo/Vercel: use hardcoded DEMAND_DATA immediately — no fetch
+    renderDemandContent();
+    return;
+  }
+
+  container.innerHTML = spinnerHTML('Loading demand forecast…');
   fetch(`${API_BASE}/forecast-demand`)
-    .then(r => r.json())
+    .then(r => r.ok ? r.json() : Promise.reject())
     .then(data => {
-      // Convert API response to the DEMAND_DATA shape the renderer expects
-      const apiMap = {};
       (data.trends||[]).forEach(t => {
-        apiMap[t.skill] = { history: t.history, growth: t.growth_pct };
-        DEMAND_DATA[t.skill] = apiMap[t.skill]; // update global too
+        DEMAND_DATA[t.skill] = { history: t.history, growth: t.growth_pct };
       });
       renderDemandContent();
     })
-    .catch(() => renderDemandContent()); // fallback to hardcoded DEMAND_DATA
+    .catch(() => renderDemandContent());
 }
 
 function renderDemandContent() {
@@ -1790,8 +1795,140 @@ function renderDemandContent() {
   }, 100);
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// MONTE CARLO SIMULATION — Enhanced SVG Fan Chart
+// ══════════════════════════════════════════════════════════════
+function renderSimulation(d) {
+  const el = document.getElementById('simulationResult');
+
+  // SVG chart params
+  const W=540, H=180, padL=52, padR=16, padT=16, padB=36;
+  const cW=W-padL-padR, cH=H-padT-padB;
+  const yrs=[0,...d.years]; // include year 0 = current
+  const p10=[d.current_salary_lpa,...d.trajectories.p10];
+  const p50=[d.current_salary_lpa,...d.trajectories.p50];
+  const p90=[d.current_salary_lpa,...d.trajectories.p90];
+
+  const minY=Math.floor(Math.min(...p10)*0.9);
+  const maxY=Math.ceil(Math.max(...p90)*1.1);
+  const xScale=i=>(i/yrs.length*cW)+padL+ (cW/(yrs.length));
+  // start at padL for yr0
+  const xs=yrs.map((_,i)=>padL+(i/(yrs.length-1))*cW);
+  const ys=v=>padT+cH-(((v-minY)/(maxY-minY))*cH);
+
+  // Band polygon: p10 forward then p90 backward
+  const bandPts=[...xs.map((x,i)=>`${x},${ys(p10[i])}`), ...xs.slice().reverse().map((x,i)=>`${x},${ys(p90[xs.length-1-i])}`)].join(' ');
+  const p50Pts=xs.map((x,i)=>`${x},${ys(p50[i])}`).join(' ');
+  const p90Pts=xs.map((x,i)=>`${x},${ys(p90[i])}`).join(' ');
+
+  // Y-axis ticks
+  const ticks=4;
+  const yTicksHTML=Array.from({length:ticks+1},(_,i)=>{
+    const v=minY+(maxY-minY)*i/ticks;
+    const y=ys(v);
+    return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.06)" stroke-width="1"/>
+    <text x="${padL-6}" y="${y+4}" text-anchor="end" font-size="9" fill="#6b7485" font-family="DM Mono,monospace">₹${v.toFixed(0)}</text>`;
+  }).join('');
+
+  // X-axis labels
+  const xLabelsHTML=xs.map((x,i)=>`<text x="${x}" y="${H-4}" text-anchor="middle" font-size="10" fill="#6b7485" font-family="DM Mono,monospace">${i===0?'Now':'Y'+yrs[i]}</text>`).join('');
+
+  const svg=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;overflow:visible">
+    ${yTicksHTML}
+    ${xLabelsHTML}
+    <!-- Confidence band P10-P90 -->
+    <polygon points="${bandPts}" fill="rgba(124,110,247,.12)" stroke="none"/>
+    <!-- P90 ceiling dashed -->
+    <polyline points="${p90Pts}" fill="none" stroke="rgba(82,217,164,.4)" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <!-- P10 floor dashed -->
+    <polyline points="${xs.map((x,i)=>`${x},${ys(p10[i])}`).join(' ')}" fill="none" stroke="rgba(232,98,90,.35)" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <!-- P50 median bold -->
+    <polyline points="${p50Pts}" fill="none" stroke="#7c6ef7" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- Dots on P50 -->
+    ${xs.map((x,i)=>`<circle cx="${x}" cy="${ys(p50[i])}" r="3.5" fill="#7c6ef7" stroke="#0d0e14" stroke-width="1.5"/>`).join('')}
+    <!-- Legend -->
+    <rect x="${padL}" y="${padT}" width="8" height="8" fill="rgba(124,110,247,.3)" rx="2"/>
+    <text x="${padL+12}" y="${padT+7}" font-size="8" fill="#8b95a8" font-family="DM Mono,monospace">P10–P90 band</text>
+    <line x1="${padL+85}" x2="${padL+97}" y1="${padT+4}" y2="${padT+4}" stroke="#7c6ef7" stroke-width="2.5"/>
+    <text x="${padL+100}" y="${padT+7}" font-size="8" fill="#8b95a8" font-family="DM Mono,monospace">Median (P50)</text>
+  </svg>`;
+
+  const mp=d.milestone_probabilities;
+  const milestones=[
+    {label:'₹20 LPA',prob:mp.prob_20lpa_in_5yr,col:'var(--green)'},
+    {label:'₹30 LPA',prob:mp.prob_30lpa_in_5yr,col:'var(--yellow)'},
+    {label:'₹50 LPA',prob:mp.prob_50lpa_in_5yr,col:'var(--pink)'},
+  ];
+
+  el.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:1.05rem">5-Year Monte Carlo Salary Simulation</div>
+        <div style="font-size:.76rem;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace">n=${d.n_samples} samples · P10/P50/P90 confidence bands</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="padding:10px 14px;background:rgba(124,110,247,.1);border:1px solid rgba(124,110,247,.25);border-radius:10px;text-align:center">
+          <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:1.3rem;color:var(--accent)">₹${d.year5_stats.median_lpa}</div>
+          <div style="font-size:.65rem;color:var(--muted)">Median Y5 LPA</div>
+        </div>
+        <div style="padding:10px 14px;background:rgba(82,217,164,.08);border:1px solid rgba(82,217,164,.2);border-radius:10px;text-align:center">
+          <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:1.3rem;color:var(--green)">₹${d.year5_stats.best_case_lpa}</div>
+          <div style="font-size:.65rem;color:var(--muted)">Best Case Y5</div>
+        </div>
+        <div style="padding:10px 14px;background:rgba(232,98,90,.06);border:1px solid rgba(232,98,90,.2);border-radius:10px;text-align:center">
+          <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:1.3rem;color:var(--red)">₹${d.year5_stats.worst_case_lpa}</div>
+          <div style="font-size:.65rem;color:var(--muted)">Worst Case Y5</div>
+        </div>
+      </div>
+    </div>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px 8px 4px;margin-bottom:16px">${svg}</div>
+    <div class="sec-label">// 5-Year Salary Table</div>
+    <div style="overflow-x:auto;margin-bottom:16px">
+      <table style="width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.76rem">
+        <thead>
+          <tr style="color:var(--muted2)">
+            <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)">Year</th>
+            <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);color:var(--red)">P10 (bear)</th>
+            <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);color:var(--accent)">P50 (median)</th>
+            <th style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);color:var(--green)">P90 (bull)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.years.map((y,i)=>`<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+            <td style="padding:6px 8px;color:var(--muted)">Year ${y}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--red)">₹${d.trajectories.p10[i]}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--accent);font-weight:700">₹${d.trajectories.p50[i]}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--green)">₹${d.trajectories.p90[i]}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="sec-label">// Milestone Probability (within 5 years)</div>
+    <div style="display:grid;gap:10px">
+      ${milestones.map(m=>`<div style="display:flex;align-items:center;gap:12px">
+        <div style="font-family:'DM Mono',monospace;font-size:.78rem;color:var(--muted);min-width:60px">${m.label}</div>
+        <div style="flex:1;height:10px;background:var(--border);border-radius:5px;overflow:hidden">
+          <div class="pct-bar-fill" data-w="${m.prob}" style="width:0;height:100%;background:${m.col};border-radius:5px"></div>
+        </div>
+        <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:.9rem;color:${m.col};min-width:48px;text-align:right">${m.prob.toFixed(1)}%</div>
+      </div>`).join('')}
+    </div>
+    ${d.planned_skills&&d.planned_skills.length?`<div style="margin-top:14px;padding:10px 14px;background:rgba(82,217,164,.06);border:1px solid rgba(82,217,164,.15);border-radius:10px;font-size:.8rem;color:var(--muted)">
+      <span style="color:var(--green);font-weight:700">📚 Planned skills factored in:</span> ${d.planned_skills.join(', ')}
+    </div>`:''}
+  </div>`;
+
+  setTimeout(()=>{
+    el.querySelectorAll('.pct-bar-fill').forEach(b=>{
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{ b.style.width=b.dataset.w+'%'; }));
+    });
+  },150);
+}
+
 // ══════════════════════════════════════════════════════════════
 // DASHBOARD INIT
+
 // ══════════════════════════════════════════════════════════════
 function initDashboard() {
   // Forecast bars
